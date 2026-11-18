@@ -91,16 +91,17 @@ pub fn from_bytes(bytes: &[u8], password: Option<&str>) -> Result<Import> {
 
 fn decode_text(bytes: &[u8]) -> Option<String> {
     let decode_utf16 = |data: &[u8], little: bool| {
-        let units: Vec<u16> = data
-            .chunks_exact(2)
-            .map(|pair| {
-                if little {
-                    u16::from_le_bytes([pair[0], pair[1]])
-                } else {
-                    u16::from_be_bytes([pair[0], pair[1]])
-                }
-            })
-            .collect();
+        let mut units = Vec::with_capacity(data.len() / 2);
+        let mut at = 0;
+        while at + 1 < data.len() {
+            let pair = [data[at], data[at + 1]];
+            units.push(if little {
+                u16::from_le_bytes(pair)
+            } else {
+                u16::from_be_bytes(pair)
+            });
+            at += 2;
+        }
         String::from_utf16(&units)
             .ok()
             .map(|s| s.trim_start_matches('\u{feff}').to_owned())
