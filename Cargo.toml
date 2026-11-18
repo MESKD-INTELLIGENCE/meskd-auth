@@ -1,0 +1,58 @@
+[package]
+name = "meskd-auth"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+description = "Offline two-factor authenticator for Windows and Linux"
+license = "MIT"
+repository = "https://github.com/MESKD-INTELLIGENCE/meskd-auth"
+homepage = "https://meskd.com"
+authors = ["MESKD INTELLIGENCE <contact@meskd.com>"]
+readme = "README.md"
+keywords = ["totp", "2fa", "authenticator", "otp"]
+categories = ["authentication", "gui"]
+
+[[bin]]
+name = "meskd-auth"
+path = "src/main.rs"
+
+[dependencies]
+arboard = "3.7.0"
+argon2 = { version = "0.6.0", default-features = false, features = ["alloc", "zeroize"] }
+base32 = "0.5.1"
+base64 = "0.23.1"
+chacha20poly1305 = { version = "0.11.0", default-features = false, features = ["alloc", "zeroize"] }
+dirs = "7.0.0"
+eframe = { version = "0.37.0", default-features = false, features = ["accesskit", "default_fonts", "glow", "wgpu", "wayland", "x11"] }
+egui = "0.37.0"
+getrandom = "0.4.3"
+hmac = "0.13.0"
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "webp", "bmp", "gif"] }
+percent-encoding = "2.3"
+qrcode = { version = "0.14.1", default-features = false }
+rfd = "0.18.0"
+rqrr = "0.11.0"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sha1 = "0.11.0"
+sha2 = "0.11.1"
+thiserror = "2.0.21"
+zeroize = "1.9.1"
+
+[dev-dependencies]
+egui_kittest = "0.37.0"
+tempfile = "3.27.0"
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
+panic = "abort"
+overflow-checks = true
+
+[target."cfg(windows)".build-dependencies]
+winresource = "0.1.34"

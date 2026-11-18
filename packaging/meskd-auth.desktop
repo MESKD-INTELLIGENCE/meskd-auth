@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Meskd Authenticator
+Comment=Two-factor codes, offline and encrypted
+Exec=meskd-auth
+Icon=meskd-auth
+Terminal=false
+Categories=Utility;Security;
+Keywords=2fa;totp;otp;authenticator;
+StartupWMClass=meskd-auth
