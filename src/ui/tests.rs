@@ -409,6 +409,48 @@ fn invalid_keys_warn_before_adding() {
 }
 
 #[test]
+fn delete_all_asks_first_and_then_clears_everything() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = unlocked(&dir);
+    h.state_mut()
+        .add_entries(vec![sample("One"), sample("Two")]);
+    h.state_mut().dialog = Some(Dialog::DeleteAll(2));
+    h.run_steps(2);
+    h.get_by_label("Delete all 2 accounts?");
+    h.get_by_label("Cancel").click();
+    h.run_steps(2);
+    assert_eq!(h.state().vault.as_ref().unwrap().data.entries.len(), 2);
+    h.state_mut().dialog = Some(Dialog::DeleteAll(2));
+    h.run_steps(2);
+    h.get_by_label("Delete all").click();
+    h.run_steps(2);
+    assert!(h.state().vault.as_ref().unwrap().data.entries.is_empty());
+    assert!(h.state().dialog.is_none());
+    drop(h);
+    let reopened = Vault::open(&dir.path().join("vault.meskd"), "correct horse").unwrap();
+    assert!(reopened.data.entries.is_empty());
+}
+
+#[test]
+fn rows_show_a_plain_countdown_in_seconds() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = unlocked(&dir);
+    h.state_mut().add_entries(vec![sample("Ticking")]);
+    h.run_steps(2);
+    let now = super::unix_now();
+    let plausible: Vec<String> = [0u64, 1, 2]
+        .iter()
+        .map(|back| super::countdown(meskd_auth::otp::seconds_left(now.saturating_sub(*back), 30)))
+        .collect();
+    assert!(
+        plausible
+            .iter()
+            .any(|label| h.query_by_label(label.as_str()).is_some()),
+        "no countdown label among {plausible:?}"
+    );
+}
+
+#[test]
 fn codes_are_grouped_for_reading() {
     assert_eq!(group("123456"), "123 456");
     assert_eq!(group("1234567"), "123 4567");

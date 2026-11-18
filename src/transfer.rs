@@ -1,4 +1,4 @@
-use crate::entry::Entry;
+use crate::entry::{Entry, OtpKind};
 use crate::error::{Error, Result};
 use crate::migration;
 use crate::qr;
@@ -41,7 +41,15 @@ pub fn needs_password(bytes: &[u8]) -> bool {
 
 pub fn from_text(text: &str) -> Import {
     let mut import = Import::default();
-    let normalized = text.replace("\\/", "/").replace("\\u0026", "&");
+    let text = text.trim_start_matches('\u{feff}');
+    let normalized = text
+        .replace("\\/", "/")
+        .replace("\\u0026", "&")
+        .replace("\\u002F", "/")
+        .replace("&amp;", "&");
+    for entry in json_entries(&normalized) {
+        import.push(entry);
+    }
     for (n, link) in find_links(&normalized).into_iter().enumerate() {
         let item = n + 1;
         if migration::is_migration(link) {
@@ -77,8 +85,118 @@ pub fn from_bytes(bytes: &[u8], password: Option<&str>) -> Result<Import> {
         let texts = qr::decode_file_bytes(bytes)?;
         return finish(from_text(&texts.join("\n")));
     }
-    let text = std::str::from_utf8(bytes).map_err(|_| Error::NothingToImport)?;
-    finish(from_text(text))
+    let text = decode_text(bytes).ok_or(Error::NothingToImport)?;
+    finish(from_text(&text))
+}
+
+fn decode_text(bytes: &[u8]) -> Option<String> {
+    let decode_utf16 = |data: &[u8], little: bool| {
+        let units: Vec<u16> = data
+            .chunks_exact(2)
+            .map(|pair| {
+                if little {
+                    u16::from_le_bytes([pair[0], pair[1]])
+                } else {
+                    u16::from_be_bytes([pair[0], pair[1]])
+                }
+            })
+            .collect();
+        String::from_utf16(&units)
+            .ok()
+            .map(|s| s.trim_start_matches('\u{feff}').to_owned())
+    };
+    if bytes.starts_with(&[0xff, 0xfe]) {
+        return decode_utf16(&bytes[2..], true);
+    }
+    if bytes.starts_with(&[0xfe, 0xff]) {
+        return decode_utf16(&bytes[2..], false);
+    }
+    std::str::from_utf8(bytes)
+        .ok()
+        .map(|s| s.trim_start_matches('\u{feff}').to_owned())
+}
+
+fn json_entries(text: &str) -> Vec<Entry> {
+    let trimmed = text.trim_start_matches(|c: char| c.is_whitespace());
+    if !trimmed.starts_with('{') && !trimmed.starts_with('[') {
+        return Vec::new();
+    }
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) else {
+        return Vec::new();
+    };
+    let mut found = Vec::new();
+    walk_json(&value, &mut found);
+    found
+}
+
+fn walk_json(value: &serde_json::Value, found: &mut Vec<Entry>) {
+    match value {
+        serde_json::Value::Object(map) => {
+            if let Some(entry) = aegis_entry(map).or_else(|| bitwarden_entry(map)) {
+                found.push(entry);
+            }
+            for child in map.values() {
+                walk_json(child, found);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for child in items {
+                walk_json(child, found);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn aegis_entry(map: &serde_json::Map<String, serde_json::Value>) -> Option<Entry> {
+    use serde_json::Value;
+    let info = map.get("info")?.as_object()?;
+    let secret = crate::entry::parse_secret(info.get("secret")?.as_str()?).ok()?;
+    let issuer = map
+        .get("issuer")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let account = map.get("name").and_then(Value::as_str).unwrap_or_default();
+    let algorithm = info
+        .get("algo")
+        .and_then(Value::as_str)
+        .and_then(|a| crate::entry::Algorithm::parse(a).ok())
+        .unwrap_or_default();
+    let digits = info.get("digits").and_then(Value::as_u64).unwrap_or(6) as u32;
+    let kind = if map.get("type").and_then(Value::as_str) == Some("hotp") {
+        OtpKind::Hotp {
+            counter: info.get("counter").and_then(Value::as_u64).unwrap_or(0),
+        }
+    } else {
+        OtpKind::Totp {
+            period: info.get("period").and_then(Value::as_u64).unwrap_or(30) as u32,
+        }
+    };
+    Entry::new(issuer, account, secret, algorithm, digits, kind).ok()
+}
+
+fn bitwarden_entry(map: &serde_json::Map<String, serde_json::Value>) -> Option<Entry> {
+    use serde_json::Value;
+    let login = map.get("login")?.as_object()?;
+    let totp = login.get("totp").and_then(Value::as_str)?.trim();
+    if totp.is_empty() || totp.to_ascii_lowercase().contains("otpauth") {
+        return None;
+    }
+    let secret = crate::entry::parse_secret(totp).ok()?;
+    let issuer = map.get("name").and_then(Value::as_str).unwrap_or_default();
+    let account = login
+        .get("username")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    Entry::new(
+        issuer,
+        account,
+        secret,
+        crate::entry::Algorithm::Sha1,
+        6,
+        OtpKind::default(),
+    )
+    .ok()
 }
 
 pub fn from_qr_texts(texts: &[String]) -> Result<Import> {
@@ -231,6 +349,51 @@ mod tests {
         let import = from_bytes(&png, None).unwrap();
         assert_eq!(import.entries.len(), 1);
         assert!(import.entries[0].same_key(&a));
+    }
+
+    #[test]
+    fn bitwarden_json_with_a_bare_totp_secret() {
+        let json = r#"{"items":[{"name":"GitHub","login":{"username":"octo","totp":"JBSWY3DPEHPK3PXP"}},{"name":"No 2fa","login":{"username":"x","totp":null}}]}"#;
+        let import = from_text(json);
+        assert_eq!(import.entries.len(), 1);
+        assert_eq!(import.entries[0].issuer, "GitHub");
+        assert_eq!(import.entries[0].account, "octo");
+        assert_eq!(import.entries[0].secret_base32(), "JBSWY3DPEHPK3PXP");
+    }
+
+    #[test]
+    fn aegis_json_export() {
+        let json = r#"{"version":1,"header":{"slots":[]},"db":{"entries":[
+            {"type":"totp","name":"ops","issuer":"Cloudflare","info":{"secret":"JBSWY3DPEHPK3PXP","algo":"SHA256","digits":8,"period":60}},
+            {"type":"hotp","name":"bank","issuer":"","info":{"secret":"GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ","algo":"SHA1","digits":6,"counter":7}}
+        ]}}"#;
+        let import = from_text(json);
+        assert_eq!(import.entries.len(), 2);
+        assert_eq!(import.entries[0].issuer, "Cloudflare");
+        assert_eq!(import.entries[0].algorithm, Algorithm::Sha256);
+        assert_eq!(import.entries[0].digits, 8);
+        assert_eq!(import.entries[0].kind, OtpKind::Totp { period: 60 });
+        assert_eq!(import.entries[1].issuer, "bank");
+        assert_eq!(import.entries[1].kind, OtpKind::Hotp { counter: 7 });
+    }
+
+    #[test]
+    fn windows_utf16_text_files_are_read() {
+        let text = "otpauth://totp/Utf16:me?secret=JBSWY3DPEHPK3PXP&issuer=Utf16";
+        let mut bytes = vec![0xff, 0xfe];
+        for unit in text.encode_utf16() {
+            bytes.extend_from_slice(&unit.to_le_bytes());
+        }
+        let import = from_bytes(&bytes, None).unwrap();
+        assert_eq!(import.entries.len(), 1);
+        assert_eq!(import.entries[0].issuer, "Utf16");
+    }
+
+    #[test]
+    fn html_escaped_links_are_read() {
+        let import = from_text("otpauth://totp/x?secret=JBSWY3DPEHPK3PXP&issuer=Big&amp;Co");
+        assert_eq!(import.entries.len(), 1);
+        assert_eq!(import.entries[0].issuer, "Big&Co");
     }
 
     #[test]

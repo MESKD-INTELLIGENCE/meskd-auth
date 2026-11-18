@@ -37,6 +37,7 @@ enum Action {
     Edit(usize),
     Qr(usize),
     Delete(usize),
+    DeleteAll,
     Up(usize),
     Down(usize),
 }
@@ -340,6 +341,16 @@ impl App {
                 }
             }
             Action::Delete(i) => self.dialog = Some(Dialog::Delete(i)),
+            Action::DeleteAll => {
+                let count = self
+                    .vault
+                    .as_ref()
+                    .map(|v| v.data.entries.len())
+                    .unwrap_or(0);
+                if count > 0 {
+                    self.dialog = Some(Dialog::DeleteAll(count));
+                }
+            }
             Action::Up(i) | Action::Down(i) => {
                 if let Some(vault) = &mut self.vault {
                     let len = vault.data.entries.len();
@@ -531,6 +542,13 @@ impl App {
                     {
                         action = Some(Action::Lock);
                     }
+                    ui.separator();
+                    if ui
+                        .button(RichText::new("Delete all accounts").color(theme::DANGER))
+                        .clicked()
+                    {
+                        action = Some(Action::DeleteAll);
+                    }
                     if action.is_some() {
                         ui.close();
                     }
@@ -629,10 +647,16 @@ impl App {
     fn schedule(&self, ctx: &egui::Context) {
         let mut wait = Duration::from_secs(3600);
         if self.vault.is_some() {
-            wait = wait.min(Duration::from_millis(200));
+            let now = unix_now_f64();
+            wait = wait.min(Duration::from_secs_f64(
+                (1.0 - now.rem_euclid(1.0)).clamp(0.02, 1.0),
+            ));
         }
-        if self.toast.is_some() || self.job.is_some() {
+        if self.job.is_some() {
             wait = wait.min(Duration::from_millis(100));
+        }
+        if let Some((_, at)) = &self.toast {
+            wait = wait.min(Duration::from_millis(3200).saturating_sub(at.elapsed()));
         }
         if let Some(at) = self.clip.next_deadline() {
             wait = wait.min(at.saturating_duration_since(Instant::now()));
@@ -771,20 +795,27 @@ fn row(
                                 } else {
                                     entry.code(now as u64)
                                 };
-                                ui.add(
-                                    egui::Label::new(
-                                        RichText::new(group(&code))
-                                            .monospace()
-                                            .size(24.0)
-                                            .color(theme::TEXT),
-                                    )
-                                    .selectable(false),
-                                );
+                                ui.horizontal(|ui| {
+                                    ui.add(
+                                        egui::Label::new(
+                                            RichText::new(group(&code))
+                                                .monospace()
+                                                .size(24.0)
+                                                .color(theme::TEXT),
+                                        )
+                                        .selectable(false),
+                                    );
+                                    if let OtpKind::Totp { period } = entry.kind {
+                                        let left = otp::seconds_left(now as u64, period);
+                                        let color =
+                                            if left <= 5 { theme::WARN } else { theme::MUTED };
+                                        ui.label(
+                                            RichText::new(countdown(left)).small().color(color),
+                                        );
+                                    }
+                                });
                             });
                         });
-                        if let OtpKind::Totp { period } = entry.kind {
-                            progress(ui, now, period);
-                        }
                     });
             },
         )
@@ -835,21 +866,8 @@ fn entry_menu(ui: &mut Ui, index: usize, total: usize, entry: &Entry) -> Option<
     action
 }
 
-fn progress(ui: &mut Ui, now: f64, period: u32) {
-    let period_f = f64::from(period.max(1));
-    let left = period_f - now.rem_euclid(period_f);
-    let fraction = (left / period_f) as f32;
-    let color = if otp::seconds_left(now as u64, period) <= 5 {
-        theme::WARN
-    } else {
-        theme::ACCENT
-    };
-    ui.add_space(2.0);
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 3.0), Sense::hover());
-    ui.painter().rect_filled(rect, 2.0, theme::LINE);
-    let mut filled = rect;
-    filled.set_width(rect.width() * fraction);
-    ui.painter().rect_filled(filled, 2.0, color);
+pub fn countdown(seconds: u32) -> String {
+    format!("{seconds}s")
 }
 
 fn busy_overlay(ctx: &egui::Context, label: &str) {

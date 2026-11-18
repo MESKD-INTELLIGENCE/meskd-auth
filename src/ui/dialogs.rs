@@ -17,6 +17,7 @@ pub enum Dialog {
         account: String,
     },
     Delete(usize),
+    DeleteAll(usize),
     Qr {
         title: String,
         matrix: Matrix,
@@ -171,6 +172,7 @@ impl App {
                         account,
                     } => self.edit_dialog(ui, *index, issuer, account),
                     Dialog::Delete(index) => self.delete_dialog(ui, *index),
+                    Dialog::DeleteAll(count) => self.delete_all_dialog(ui, *count),
                     Dialog::Qr { title, matrix } => qr_dialog(ui, title, matrix),
                     Dialog::Preview(import) => self.preview_dialog(ui, import),
                     Dialog::BackupPassword {
@@ -407,6 +409,28 @@ impl App {
             }
             self.save();
             self.notify("Deleted");
+            return Next::Close;
+        }
+        if cancel { Next::Close } else { Next::Keep }
+    }
+
+    fn delete_all_dialog(&mut self, ui: &mut Ui, count: usize) -> Next {
+        title(ui, "Delete all accounts");
+        ui.label(format!(
+            "Delete all {count} account{}?",
+            if count == 1 { "" } else { "s" }
+        ));
+        muted(
+            ui,
+            "The vault and your password stay. Every account is removed, and you will need a backup to bring them back.",
+        );
+        let (cancel, ok) = actions(ui, theme::danger("Delete all"));
+        if ok {
+            if let Some(vault) = &mut self.vault {
+                vault.data.entries.clear();
+            }
+            self.save();
+            self.notify("All accounts deleted");
             return Next::Close;
         }
         if cancel { Next::Close } else { Next::Keep }

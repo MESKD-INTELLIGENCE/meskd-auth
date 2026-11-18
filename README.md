@@ -21,9 +21,10 @@ Get the latest build from [Releases](https://github.com/MESKD-INTELLIGENCE/meskd
 
 - Time-based (TOTP) and counter-based (HOTP) codes, SHA1, SHA256 and SHA512, 6 to 8 digits
 - Add accounts from a QR code image, a pasted screenshot, an `otpauth://` link or the setup key a website shows
-- Import Google Authenticator exports
+- Import Google Authenticator exports, Bitwarden and Aegis JSON, plain otpauth:// lists and CSV files
 - Export to an encrypted backup, a plain list of `otpauth://` links, or QR codes Google Authenticator can scan
 - Click an account to copy its code. The clipboard is cleared after 30 seconds and kept out of Windows clipboard history
+- Delete single accounts or all of them, each behind a confirmation
 - Locks itself after 5 minutes without input
 
 ## Adding an account
