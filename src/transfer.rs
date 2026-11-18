@@ -374,7 +374,8 @@ mod tests {
         assert_eq!(import.entries[0].algorithm, Algorithm::Sha256);
         assert_eq!(import.entries[0].digits, 8);
         assert_eq!(import.entries[0].kind, OtpKind::Totp { period: 60 });
-        assert_eq!(import.entries[1].issuer, "bank");
+        assert_eq!(import.entries[1].issuer, "");
+        assert_eq!(import.entries[1].account, "bank");
         assert_eq!(import.entries[1].kind, OtpKind::Hotp { counter: 7 });
     }
 
@@ -392,9 +393,11 @@ mod tests {
 
     #[test]
     fn html_escaped_links_are_read() {
-        let import = from_text("otpauth://totp/x?secret=JBSWY3DPEHPK3PXP&issuer=Big&amp;Co");
+        let import =
+            from_text("otpauth://totp/x?secret=JBSWY3DPEHPK3PXP&amp;issuer=Big%20Co&amp;digits=8");
         assert_eq!(import.entries.len(), 1);
-        assert_eq!(import.entries[0].issuer, "Big&Co");
+        assert_eq!(import.entries[0].issuer, "Big Co");
+        assert_eq!(import.entries[0].digits, 8);
     }
 
     #[test]
